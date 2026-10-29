@@ -122,6 +122,7 @@ const SCHEMA: string[] = [
     hours REAL NOT NULL,
     note TEXT NOT NULL DEFAULT '',
     payslip_id TEXT,
+    payroll_run_id TEXT,
     created_at TEXT NOT NULL,
     FOREIGN KEY (employee_id) REFERENCES employees(id)
   )`,
@@ -184,8 +185,26 @@ export async function initDatabase(): Promise<void> {
   for (const statement of SCHEMA) {
     await db.execute(statement);
   }
+  await migrate();
   await seed();
   initialised = true;
+}
+
+/**
+ * Adds columns that were introduced after the first release. CREATE TABLE IF
+ * NOT EXISTS does not alter an existing table, so each change is applied here.
+ */
+async function migrate(): Promise<void> {
+  const db = getDb();
+  const info = await db.execute('PRAGMA table_info(holiday_ledger)');
+  const hasRunColumn = info.rows.some(
+    (row) => String(row.name) === 'payroll_run_id',
+  );
+  if (!hasRunColumn) {
+    await db.execute(
+      'ALTER TABLE holiday_ledger ADD COLUMN payroll_run_id TEXT',
+    );
+  }
 }
 
 export async function getSetting(

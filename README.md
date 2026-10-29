@@ -406,6 +406,8 @@ holiday ledger.
    - new run wizard: pick period + frequency → enter hours/bonus/holiday taken per
      employee → live preview → finalise
    - run detail: per-employee breakdown, totals, employer cost
+   - void a mistaken run: removes the run, its payslips and the holiday hours it
+     added, and records the void in the audit log
    - payslip view + CSV/print
 5. **HMRC liability** — per run: PAYE, employee NI, employer NI, student loans,
    employment allowance, total due, payment reference and due date (22nd by

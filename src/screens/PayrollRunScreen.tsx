@@ -9,6 +9,7 @@ import {
   getPayslips,
   getYtd,
   listEmployees,
+  voidPayrollRun,
 } from '../db/repositories';
 import type { NewHolidayEntry, NewPayslip } from '../db/repositories';
 import {
@@ -225,6 +226,37 @@ export function PayrollRunScreen({ navigation, route }: Props) {
       hmrcDue: paye + employeeNi + employerNi + studentLoan - allowance,
     };
   }, [preview, rateSet, eligibleForAllowance, allowanceUsed]);
+
+  const confirmVoid = () => {
+    if (!existing) {
+      return;
+    }
+    const count = existing.totals.employeeCount;
+    Alert.alert(
+      'Void payroll run?',
+      `This removes the ${displayDate(existing.payDate)} run, ${count} ${
+        count === 1 ? 'payslip' : 'payslips'
+      } and any holiday hours it added. It cannot be undone. The audit log keeps a record of the void.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Void run',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await voidPayrollRun(existing.id);
+              navigation.goBack();
+            } catch (err) {
+              Alert.alert(
+                'Could not void run',
+                err instanceof Error ? err.message : String(err),
+              );
+            }
+          },
+        },
+      ],
+    );
+  };
 
   const finalise = async () => {
     if (!rateSet) {
@@ -474,6 +506,21 @@ export function PayrollRunScreen({ navigation, route }: Props) {
             <Text style={styles.hint}>No payslips stored for this run.</Text>
           </Card>
         ) : null}
+
+        <SectionTitle>Danger zone</SectionTitle>
+        <Card>
+          <Text style={styles.hint}>
+            Voiding removes this run, its payslips and the holiday hours it
+            added. Use it only to undo a mistake. The action is recorded in the
+            audit log.
+          </Text>
+          <AppButton
+            title="Void this run"
+            variant="danger"
+            onPress={confirmVoid}
+            style={styles.voidButton}
+          />
+        </Card>
       </ScrollScreen>
     );
   }
@@ -736,6 +783,9 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
     minHeight: 42,
     paddingVertical: 10,
+  },
+  voidButton: {
+    marginTop: spacing.md,
   },
   employeeHeader: {
     flexDirection: 'row',

@@ -492,8 +492,9 @@ export async function createPayrollRun(input: NewPayrollRun): Promise<string> {
     for (const entry of input.holiday) {
       await tx.execute(
         `INSERT INTO holiday_ledger
-          (id, employee_id, entry_date, type, hours, note, payslip_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, employee_id, entry_date, type, hours, note, payslip_id,
+           payroll_run_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           makeId('hol'),
           entry.employeeId,
@@ -504,6 +505,7 @@ export async function createPayrollRun(input: NewPayrollRun): Promise<string> {
           entry.type === 'TAKEN' || entry.type === 'PAID'
             ? payslipIds.get(entry.employeeId) ?? null
             : null,
+          runId,
           now,
         ],
       );
@@ -515,6 +517,71 @@ export async function createPayrollRun(input: NewPayrollRun): Promise<string> {
     employees: input.payslips.length,
   });
   return runId;
+}
+
+/**
+ * Removes a finalised run and everything it created: payslips, holiday
+ * accrual/taken entries, and the run row itself. Used to undo a mistake such
+ * as a run with a £0 hourly rate. The audit log keeps a summary of what was
+ * removed.
+ */
+export async function voidPayrollRun(runId: string): Promise<void> {
+  const db = getDb();
+  const runResult = await db.execute(
+    'SELECT * FROM payroll_runs WHERE id = ?',
+    [runId],
+  );
+  const runRow = runResult.rows[0];
+  if (!runRow) {
+    throw new Error('Payroll run not found.');
+  }
+  const slipsResult = await db.execute(
+    'SELECT * FROM payslips WHERE payroll_run_id = ?',
+    [runId],
+  );
+  const slips = slipsResult.rows;
+  const sum = (column: string) =>
+    slips.reduce((total, row) => total + number(row[column]), 0);
+
+  await db.transaction(async (tx) => {
+    // Holiday taken/paid rows are linked to their payslip.
+    await tx.execute(
+      `DELETE FROM holiday_ledger
+       WHERE payslip_id IN (SELECT id FROM payslips WHERE payroll_run_id = ?)`,
+      [runId],
+    );
+    // Holiday accrual rows created by this run.
+    await tx.execute(
+      'DELETE FROM holiday_ledger WHERE payroll_run_id = ?',
+      [runId],
+    );
+    // Runs created before payroll_run_id was stored: match the accrual rows by
+    // employee, period end and the exact hours recorded on the payslip.
+    for (const slip of slips) {
+      await tx.execute(
+        `DELETE FROM holiday_ledger
+         WHERE payroll_run_id IS NULL AND employee_id = ? AND type = 'ACCRUAL'
+           AND entry_date = ? AND ABS(hours - ?) < 0.0001`,
+        [
+          text(slip.employee_id),
+          text(runRow.period_end),
+          number(slip.holiday_accrued_hours),
+        ],
+      );
+    }
+    await tx.execute('DELETE FROM payslips WHERE payroll_run_id = ?', [runId]);
+    await tx.execute('DELETE FROM payroll_runs WHERE id = ?', [runId]);
+  });
+
+  await logAudit('void', 'payroll_run', runId, {
+    payDate: text(runRow.pay_date),
+    periodStart: text(runRow.period_start),
+    periodEnd: text(runRow.period_end),
+    employees: slips.length,
+    grossPayPence: sum('gross_pay_pence'),
+    payePence: sum('paye_pence'),
+    netPayPence: sum('net_pay_pence'),
+  });
 }
 
 export async function listPayrollRuns(): Promise<PayrollRunWithTotals[]> {
