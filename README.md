@@ -261,7 +261,7 @@ Cumulative basis (normal case):
 5. `paye_this_period = tax_due_to_date − YTD tax paid`
 
 `WEEK1_MONTH1` codes tax each period in isolation (no YTD). `BR` = 20% flat,
-`D0` = 40% flat, `0T` = no allowance. K-codes are a phase-2 item.
+`D0` = 40% flat, `0T` = no allowance. K-codes are supported.
 
 Personal allowance taper: for adjusted net income above £100,000, allowance reduces
 by £1 for every £2 above the threshold.
@@ -289,9 +289,10 @@ using HMRC's published per-period tables to avoid rounding drift.
 Category B/C/H/J/M/Z rate variants live in `ni_thresholds`; MVP can start with A and
 add others as data. Directors (annual earnings period) are out of scope.
 
-Employment Allowance (up to £10,500/year) is applied at the **company** level on the
-HMRC liability report, not on individual payslips, and only if the company is
-eligible (not a single-director company).
+Employment Allowance (up to £10,500/year) is applied at the **run** level against
+employer NI, not on individual payslips, and only if the company is eligible (not a
+single-director company). The remaining allowance is tracked across finalised runs
+for the tax year and is stored once per run, so multi-employee runs do not multiply it.
 
 ### 4.4 Pension (auto-enrolment)
 
@@ -397,6 +398,8 @@ holiday ledger.
 3. **Employees**
    - list with search/filter, hourly rate, tax code, NI category, status
    - detail/edit form grouped into Personal, Employment, Payroll, Pension, Holiday
+   - hourly rate is required and must be above £0.00; new employees default to
+     Week 1 / Month 1 until a P45 or previous pay details are available
    - hourly rate field with effective-date history (rate changes are audited)
 4. **Payroll runs**
    - list of draft/finalised runs
@@ -422,18 +425,19 @@ England, enrolled pension 5%/3%, no student loan.
 
 ```
 Gross                        £600.00
-Pension (5% of qualifying)   −£28.87   (qualifying earnings £577.33)
-Taxable pay                   £571.13
-PAYE (cumulative)            −£89.23
-Employee NI (8% above PT)    −£44.96
-Net pay                      £436.94
+Pension (5% of qualifying)   −£24.00   (qualifying earnings £480.00)
+Taxable pay                   £576.00
+PAYE (cumulative)            −£66.85
+Employee NI (8% above PT)    −£28.64
+Net pay                      £480.51
 
-Employer NI (15% above ST)    £86.54
-Employer pension (3%)         £17.32
-Total employer cost          £703.86
+Employer NI (15% above ST)    £75.60
+Employer pension (3%)         £14.40
+Total employer cost          £690.00
 ```
 
-(Indicative only; exact figures depend on the per-period threshold tables and YTD.)
+(Indicative only; exact figures depend on the per-period threshold tables and YTD.
+These figures match the automated payroll engine tests.)
 
 ---
 

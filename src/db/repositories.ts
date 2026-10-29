@@ -22,6 +22,8 @@ import type {
   RateSetStatus,
 } from '../types';
 import { getDb, logAudit, makeId } from './database';
+import { buildHmrcSummary } from './hmrcSummary';
+import type { HmrcTotalsInput } from './hmrcSummary';
 
 const text = (value: Scalar | undefined): string =>
   value === null || value === undefined ? '' : String(value);
@@ -208,6 +210,9 @@ export async function saveEmployee(
   draft: EmployeeDraft,
   id?: string,
 ): Promise<string> {
+  if (!Number.isFinite(draft.hourlyRatePence) || draft.hourlyRatePence <= 0) {
+    throw new Error('Enter an hourly rate greater than £0.00.');
+  }
   const db = getDb();
   const employeeId = id ?? makeId('emp');
   const now = new Date().toISOString();
@@ -632,7 +637,7 @@ export async function getYtd(
      FROM payslips p
      JOIN payroll_runs r ON r.id = p.payroll_run_id
      WHERE p.employee_id = ? AND r.tax_year = ?
-       AND r.status = 'FINALISED' AND r.pay_date < ?`,
+       AND r.status = 'FINALISED' AND r.pay_date <= ?`,
     [employeeId, taxYear, beforePayDate],
   );
   return {
@@ -649,7 +654,7 @@ export async function getEmploymentAllowanceUsed(
   const result = await db.execute(
     `SELECT COALESCE(SUM(employment_allowance_pence), 0) AS used
      FROM payroll_runs
-     WHERE tax_year = ? AND status = 'FINALISED' AND pay_date < ?`,
+     WHERE tax_year = ? AND status = 'FINALISED' AND pay_date <= ?`,
     [taxYear, beforePayDate],
   );
   return number(result.rows[0]?.used);
@@ -734,33 +739,34 @@ export async function getHmrcSummary(taxYear: string): Promise<HmrcSummary> {
       COALESCE(SUM(p.student_loan_pence), 0) AS student_loan,
       COALESCE(SUM(p.employer_pension_pence), 0) AS employer_pension,
       COALESCE(SUM(p.gross_pay_pence), 0) AS gross,
-      COALESCE(SUM(r.employment_allowance_pence), 0) AS employment_allowance,
+      (
+        SELECT COALESCE(SUM(r2.employment_allowance_pence), 0)
+        FROM payroll_runs r2
+        WHERE r2.tax_year = ? AND r2.status = 'FINALISED'
+      ) AS employment_allowance,
       COUNT(DISTINCT p.employee_id) AS employee_count,
       COUNT(DISTINCT r.id) AS run_count
     FROM payroll_runs r
     LEFT JOIN payslips p ON p.payroll_run_id = r.id
     WHERE r.tax_year = ? AND r.status = 'FINALISED'`,
-    [taxYear],
+    [taxYear, taxYear],
   );
   const row = result.rows[0] ?? {};
-  const paye = number(row.paye);
-  const employeeNi = number(row.employee_ni);
-  const employerNi = number(row.employer_ni);
-  const studentLoan = number(row.student_loan);
-  const allowance = number(row.employment_allowance);
-  return {
-    taxYear,
-    payePence: paye,
-    employeeNiPence: employeeNi,
-    employerNiPence: employerNi,
-    studentLoanPence: studentLoan,
-    employmentAllowancePence: allowance,
-    totalDuePence: paye + employeeNi + employerNi + studentLoan - allowance,
+  const totals: HmrcTotalsInput = {
+    payePence: number(row.paye),
+    employeeNiPence: number(row.employee_ni),
+    employerNiPence: number(row.employer_ni),
+    studentLoanPence: number(row.student_loan),
     employerPensionPence: number(row.employer_pension),
     grossPayPence: number(row.gross),
     employeeCount: number(row.employee_count),
     runCount: number(row.run_count),
   };
+  return buildHmrcSummary(
+    taxYear,
+    totals,
+    number(row.employment_allowance),
+  );
 }
 
 export async function listTaxYears(): Promise<string[]> {

@@ -40,6 +40,7 @@ import {
 } from '../ui/components';
 import { colors, spacing } from '../ui/theme';
 import { displayDate, payPeriodFor, todayIso } from '../utils/dates';
+import { filterEmployeesForPayRun } from '../utils/employees';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'PayrollRun'>;
 type YtdMap = Record<string, { taxablePayPence: number; taxPaidPence: number }>;
@@ -103,8 +104,12 @@ export function PayrollRunScreen({ navigation, route }: Props) {
       if (!activeRateSet) {
         return;
       }
-      const relevant = employees.filter(
-        (employee) => employee.payFrequency === nextFrequency,
+      const nextPeriod = payPeriodFor(nextPayDate, nextFrequency);
+      const relevant = filterEmployeesForPayRun(
+        employees,
+        nextFrequency,
+        nextPeriod.start,
+        nextPeriod.end,
       );
       const entries = await Promise.all(
         relevant.map(async (employee) => {
@@ -129,8 +134,14 @@ export function PayrollRunScreen({ navigation, route }: Props) {
     settings.employment_allowance_eligible === 'true';
 
   const relevantEmployees = useMemo(
-    () => employees.filter((employee) => employee.payFrequency === frequency),
-    [employees, frequency],
+    () =>
+      filterEmployeesForPayRun(
+        employees,
+        frequency,
+        period.start,
+        period.end,
+      ),
+    [employees, frequency, period.start, period.end],
   );
 
   const preview = useMemo<PreviewLine[]>(() => {
@@ -143,16 +154,19 @@ export function PayrollRunScreen({ navigation, route }: Props) {
       const worked = Number(hours[employee.id] ?? '');
       const bonusPounds = parsePounds(bonus[employee.id] ?? '') ?? 0;
       const holidayHours = Number(holiday[employee.id] ?? '');
-      const safeHours = Number.isFinite(worked) ? worked : 0;
-      const safeHoliday = Number.isFinite(holidayHours) ? holidayHours : 0;
-      if (safeHours <= 0 && bonusPounds <= 0 && safeHoliday <= 0) {
+      const safeHours = Number.isFinite(worked) ? Math.max(0, worked) : 0;
+      const safeHoliday = Number.isFinite(holidayHours)
+        ? Math.max(0, holidayHours)
+        : 0;
+      const safeBonusPounds = Math.max(0, bonusPounds);
+      if (safeHours <= 0 && safeBonusPounds <= 0 && safeHoliday <= 0) {
         continue;
       }
       const calculation = calculatePayslip({
         employee,
         rates: rateSet.data,
         hoursWorked: safeHours,
-        bonusPence: roundPence(bonusPounds * 100),
+        bonusPence: roundPence(safeBonusPounds * 100),
         holidayHours: safeHoliday,
         periodNumber: taxPeriod.periodNumber,
         totalPeriods: taxPeriod.totalPeriods,
@@ -161,7 +175,7 @@ export function PayrollRunScreen({ navigation, route }: Props) {
       lines.push({
         employee,
         hours: safeHours,
-        bonusPence: roundPence(bonusPounds * 100),
+        bonusPence: roundPence(safeBonusPounds * 100),
         holidayHours: safeHoliday,
         grossPence: calculation.grossPayPence,
         netPence: calculation.netPayPence,
@@ -221,6 +235,32 @@ export function PayrollRunScreen({ navigation, route }: Props) {
       Alert.alert(
         'Nothing to pay',
         'Enter hours, holiday hours or a bonus for at least one employee.',
+      );
+      return;
+    }
+    const missingRates = preview.filter(
+      (line) =>
+        (line.hours > 0 || line.holidayHours > 0) &&
+        line.employee.hourlyRatePence <= 0,
+    );
+    if (missingRates.length > 0) {
+      const names = missingRates
+        .map(
+          (line) =>
+            `${line.employee.firstName} ${line.employee.lastName}`.trim(),
+        )
+        .join(', ');
+      Alert.alert(
+        'Hourly rate missing',
+        `Set an hourly rate above £0.00 for ${names}. Open the employee record, update the rate, then run payroll again.`,
+      );
+      return;
+    }
+    const zeroPay = preview.filter((line) => line.grossPence <= 0);
+    if (zeroPay.length > 0) {
+      Alert.alert(
+        'No gross pay',
+        'One or more employees would be paid £0.00. Check the hours and hourly rates before finalising.',
       );
       return;
     }
@@ -506,6 +546,12 @@ export function PayrollRunScreen({ navigation, route }: Props) {
                   </Text>
                 ) : null}
               </View>
+              {employee.hourlyRatePence <= 0 ? (
+                <Text style={styles.rateWarning}>
+                  Hourly rate is £0.00. Edit this employee and set a rate before
+                  finalising payroll.
+                </Text>
+              ) : null}
               <View style={styles.inputRow}>
                 <TextField
                   label="Hours"
@@ -620,6 +666,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.danger,
     lineHeight: 18,
+    marginTop: spacing.sm,
+  },
+  rateWarning: {
+    fontSize: 12,
+    color: colors.danger,
+    lineHeight: 17,
     marginTop: spacing.sm,
   },
   divider: {

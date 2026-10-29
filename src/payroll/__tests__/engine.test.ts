@@ -116,6 +116,47 @@ describe('payroll engine', () => {
     expect(result.payePence).toBe(39_050);
   });
 
+  it('uses week 1/month 1 PAYE for a new starter with no previous pay', () => {
+    const result = calculate(
+      {
+        payFrequency: 'MONTHLY',
+        hourlyRatePence: 1_875,
+        taxBasis: 'WEEK1_MONTH1',
+      },
+      { totalPeriods: 12, periodNumber: 6, hoursWorked: 160 },
+    );
+    expect(result.payePence).toBe(39_050);
+  });
+
+  it('does not use previous pay when week 1/month 1 is selected', () => {
+    const result = calculate(
+      {
+        payFrequency: 'MONTHLY',
+        hourlyRatePence: 1_875,
+        taxBasis: 'WEEK1_MONTH1',
+      },
+      {
+        totalPeriods: 12,
+        periodNumber: 6,
+        hoursWorked: 160,
+        ytd: { taxablePayPence: 1_500_000, taxPaidPence: 200_000 },
+      },
+    );
+    expect(result.payePence).toBe(39_050);
+  });
+
+  it('cumulative PAYE with no previous pay gives zero tax mid-year', () => {
+    const result = calculate(
+      {
+        payFrequency: 'MONTHLY',
+        hourlyRatePence: 1_875,
+        taxBasis: 'CUMULATIVE',
+      },
+      { totalPeriods: 12, periodNumber: 6, hoursWorked: 160 },
+    );
+    expect(result.payePence).toBe(0);
+  });
+
   it('accrues holiday at 12.07% of hours worked', () => {
     const result = calculate();
     expect(result.holidayAccruedHours).toBe(4.828);

@@ -118,7 +118,7 @@ export function EmployeesScreen() {
               <View style={styles.badges}>
                 <Badge
                   label={`${formatMoney(employee.hourlyRatePence)}/hr`}
-                  tone="teal"
+                  tone={employee.hourlyRatePence <= 0 ? 'danger' : 'teal'}
                 />
                 <Badge label={employee.taxCode || '1257L'} />
                 {!employee.active ? <Badge label="Archived" tone="warning" /> : null}

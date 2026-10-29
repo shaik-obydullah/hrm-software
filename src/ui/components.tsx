@@ -35,7 +35,8 @@ export function ScrollScreen({
     <ScrollView
       style={styles.screen}
       contentContainerStyle={[styles.scrollContent, contentStyle]}
-      keyboardShouldPersistTaps="handled"
+      keyboardShouldPersistTaps="always"
+      keyboardDismissMode="on-drag"
     >
       {children}
     </ScrollView>

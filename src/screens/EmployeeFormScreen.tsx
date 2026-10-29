@@ -1,6 +1,6 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useEffect, useState } from 'react';
-import { Alert, StyleSheet, Text, View } from 'react-native';
+import { Alert, StyleSheet, Text } from 'react-native';
 import {
   archiveEmployee,
   getEmployee,
@@ -35,7 +35,8 @@ import {
   ToggleRow,
 } from '../ui/components';
 import { colors, spacing } from '../ui/theme';
-import { isValidIsoDate, todayIso } from '../utils/dates';
+import { todayIso } from '../utils/dates';
+import { validateEmployeeForm } from '../utils/employeeValidation';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'EmployeeForm'>;
 
@@ -57,7 +58,7 @@ function emptyDraft(): EmployeeDraft {
     hourlyRatePence: 0,
     payFrequency: 'MONTHLY',
     taxCode: '1257L',
-    taxBasis: 'CUMULATIVE',
+    taxBasis: 'WEEK1_MONTH1',
     niCategory: 'A',
     region: 'ENGLAND_WALES_NI',
     studentLoanPlan: 'NONE',
@@ -104,38 +105,17 @@ export function EmployeeFormScreen({ navigation, route }: Props) {
   ) => setDraft((current) => ({ ...current, [key]: value }));
 
   const validate = (): boolean => {
-    const next: Record<string, string> = {};
-    if (!draft.firstName.trim()) {
-      next.firstName = 'First name is required.';
-    }
-    if (!draft.lastName.trim()) {
-      next.lastName = 'Last name is required.';
-    }
-    const rate = parsePounds(hourlyRate);
-    if (rate === null || rate < 0) {
-      next.hourlyRate = 'Enter a valid hourly rate.';
-    }
-    if (draft.startDate && !isValidIsoDate(draft.startDate)) {
-      next.startDate = 'Use YYYY-MM-DD.';
-    }
-    if (draft.endDate && !isValidIsoDate(draft.endDate)) {
-      next.endDate = 'Use YYYY-MM-DD.';
-    }
-    if (draft.dateOfBirth && !isValidIsoDate(draft.dateOfBirth)) {
-      next.dateOfBirth = 'Use YYYY-MM-DD.';
-    }
-    const empPct = Number(employeePct);
-    const erPct = Number(employerPct);
-    if (!Number.isFinite(empPct) || empPct < 0 || empPct > 100) {
-      next.employeePct = 'Enter a percentage between 0 and 100.';
-    }
-    if (!Number.isFinite(erPct) || erPct < 0 || erPct > 100) {
-      next.employerPct = 'Enter a percentage between 0 and 100.';
-    }
-    const holiday = Number(holidayDays);
-    if (!Number.isFinite(holiday) || holiday < 0) {
-      next.holidayDays = 'Enter a valid number of days.';
-    }
+    const next = validateEmployeeForm({
+      firstName: draft.firstName,
+      lastName: draft.lastName,
+      hourlyRate,
+      startDate: draft.startDate,
+      endDate: draft.endDate,
+      dateOfBirth: draft.dateOfBirth,
+      employeePct,
+      employerPct,
+      holidayDays,
+    });
     setErrors(next);
     return Object.keys(next).length === 0;
   };
@@ -270,6 +250,15 @@ export function EmployeeFormScreen({ navigation, route }: Props) {
           onChangeText={(value) => set('jobTitle', value)}
         />
         <TextField
+          label="Hourly rate (£)"
+          value={hourlyRate}
+          onChangeText={setHourlyRate}
+          placeholder="12.50"
+          keyboardType="decimal-pad"
+          hint="Required. Used for hours worked and holiday pay."
+          error={errors.hourlyRate}
+        />
+        <TextField
           label="Department"
           value={draft.department}
           onChangeText={(value) => set('department', value)}
@@ -289,14 +278,6 @@ export function EmployeeFormScreen({ navigation, route }: Props) {
           placeholder="YYYY-MM-DD"
           error={errors.endDate}
           keyboardType="numbers-and-punctuation"
-        />
-        <TextField
-          label="Hourly rate (£)"
-          value={hourlyRate}
-          onChangeText={setHourlyRate}
-          placeholder="12.50"
-          keyboardType="decimal-pad"
-          error={errors.hourlyRate}
         />
         <Text style={styles.fieldLabel}>Pay frequency</Text>
         <Segmented<PayFrequency>
@@ -328,11 +309,21 @@ export function EmployeeFormScreen({ navigation, route }: Props) {
           value={draft.taxBasis}
           onChange={(value) => set('taxBasis', value)}
         />
+        <Text style={styles.hint}>
+          Use Week 1 / Month 1 for new starters until you have their P45 or
+          previous pay details. Cumulative uses year-to-date pay.
+        </Text>
         <Text style={styles.fieldLabel}>NI category</Text>
         <Segmented<NiCategory>
           options={NI_CATEGORIES}
           value={draft.niCategory}
           onChange={(value) => set('niCategory', value)}
+        />
+        <Text style={styles.fieldLabel}>Student loan plan</Text>
+        <Segmented<StudentLoanPlan>
+          options={STUDENT_LOAN_PLANS}
+          value={draft.studentLoanPlan}
+          onChange={(value) => set('studentLoanPlan', value)}
         />
         <Text style={styles.fieldLabel}>Region</Text>
         <Segmented<Region>
@@ -419,6 +410,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.muted,
     lineHeight: 18,
+    marginTop: 6,
   },
   archive: {
     marginTop: spacing.sm,
