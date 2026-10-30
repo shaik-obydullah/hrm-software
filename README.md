@@ -240,8 +240,19 @@ Child tables (all keyed to `rate_set_id`):
 
 ## 4. Payroll engine
 
-Pure TypeScript module (`src/lib/payroll/`) with no UI or database dependencies so it
+Pure TypeScript module (`src/payroll/`) with no UI or database dependencies so it
 can be unit-tested exhaustively. Every function takes a rate set as an argument.
+
+Order of operations for one payslip:
+
+1. Gross pay from hours, holiday hours and bonus.
+2. Pension on qualifying earnings (calculated from gross).
+3. Taxable pay = gross − employee pension (net-pay scheme only).
+4. PAYE on taxable pay.
+5. Employee and employer NI on gross.
+6. Student loan on gross.
+7. Net pay = gross − PAYE − employee NI − employee pension − student loan.
+8. Employer cost = gross + employer NI + employer pension.
 
 ### 4.1 Gross pay
 
@@ -427,26 +438,108 @@ holiday ledger.
 
 ---
 
-## 7. Example calculation
+## 7. Worked examples (step by step)
 
-Employee: £15/hour, 40 hours/week, weekly pay, tax code `1257L`, NI category A,
-England, enrolled pension 5%/3%, no student loan.
+All figures below use the seeded 2026/27 rates. Per-period thresholds are the
+annual figures divided by the number of pay periods and rounded to the nearest
+pound, which gives the weekly values used here.
+
+### 7.1 Weekly, cumulative tax, with pension
+
+Employee: £15.00/hour, 40 hours, weekly pay (week 1 of 52), tax code `1257L`
+(cumulative), NI category A, England, pension 5% employee / 3% employer,
+no student loan.
+
+**1. Gross pay**
+```
+basic   = 40 × £15.00                            = £600.00
+bonus   = £0.00
+holiday = £0.00
+gross   = £600.00
+```
+
+**2. Pension** — qualifying earnings between £120.00 and £967.00 per week
+```
+qualifying    = £600.00 − £120.00                = £480.00
+employee 5%   = £480.00 × 5%                     = £24.00
+employer 3%   = £480.00 × 3%                     = £14.40
+```
+
+**3. Taxable pay** — net-pay pension reduces taxable pay
+```
+taxable = £600.00 − £24.00                       = £576.00
+```
+
+**4. PAYE** — cumulative, so the allowance is pro-rated to the week
+```
+allowance to date = £12,570 × 1/52               = £241.73
+taxable to date   = £576.00 − £241.73            = £334.27
+tax               = £334.27 × 20%                = £66.85
+```
+
+**5. National Insurance** — per week, category A
+```
+primary threshold (PT)   = £12,570 ÷ 52          = £242.00
+upper earnings limit     = £50,270 ÷ 52          = £967.00
+secondary threshold (ST) = £5,000 ÷ 52           = £96.00
+
+employee main  = (£600.00 − £242.00) × 8%        = £28.64
+employee upper = £0.00                           = £0.00
+employer       = (£600.00 − £96.00) × 15%        = £75.60
+```
+
+**6. Net pay and employer cost**
+```
+net           = £600.00 − £66.85 − £28.64 − £24.00 = £480.51
+employer cost = £600.00 + £75.60 + £14.40          = £690.00
+```
+
+**7. Holiday accrual**
+```
+accrued = 40h × 12.07% = 4.83h
+```
+
+### 7.2 Weekly, Week 1 / Month 1, with bonus
+
+Employee: £12.00/hour, 30 hours, £15.00 bonus, weekly pay (week 30 of 52),
+tax code `1257L` on a Week 1 / Month 1 basis, NI category A, no pension or
+student loan.
 
 ```
-Gross                        £600.00
-Pension (5% of qualifying)   −£24.00   (qualifying earnings £480.00)
-Taxable pay                   £576.00
-PAYE (cumulative)            −£66.85
-Employee NI (8% above PT)    −£28.64
-Net pay                      £480.51
-
-Employer NI (15% above ST)    £75.60
-Employer pension (3%)         £14.40
-Total employer cost          £690.00
+gross           = 30 × £12.00 + £15.00           = £375.00
+taxable         = £375.00
+allowance       = £12,570 ÷ 52                   = £241.73
+taxable         = £375.00 − £241.73              = £133.27
+PAYE            = £133.27 × 20%                  = £26.65
+employee NI     = (£375.00 − £242.00) × 8%       = £10.64
+employer NI     = (£375.00 − £96.00) × 15%       = £41.85
+net             = £375.00 − £26.65 − £10.64      = £337.71
+employer cost   = £375.00 + £41.85               = £416.85
+holiday accrued = 30h × 12.07%                   = 3.62h
 ```
 
-(Indicative only; exact figures depend on the per-period threshold tables and YTD.
-These figures match the automated payroll engine tests.)
+Week 1 / Month 1 applies the allowance and bands to this period alone
+(`annual ÷ periods`) with no year-to-date figures, so the result does not depend
+on earlier pay in the tax year. A bonus is taxable and NIable but does not
+accrue holiday — only hours worked do.
+
+### 7.3 Student loan, if present
+
+Plan 2, weekly, gross £600.00:
+```
+threshold = £28,470 ÷ 52                         = £547.50
+deduction = (£600.00 − £547.50) × 9%             = £4.73
+```
+
+The student loan deduction is taken after tax and NI, and does not reduce
+taxable pay. Postgraduate loans stack on top of Plan 1/2/4/5.
+
+### 7.4 Rounding
+
+- Each step is rounded to the nearest penny, half-up.
+- NI and student loan thresholds are rounded to whole pounds per period, not
+  annual ÷ periods to the penny, to match HMRC tables.
+- These figures match the automated payroll engine tests (`src/payroll/__tests__`).
 
 ---
 
@@ -459,7 +552,7 @@ These figures match the automated payroll engine tests.)
 | 2 | Employee CRUD | create/edit/list employees incl. hourly rate |
 | 3 | Rates admin + seed data | clone/edit/validate/activate a rate set, audited |
 | 4 | Payroll engine + tests | Jest tests pass for PAYE, NI, pension, student loan, holiday |
-| 5 | Payroll run UI + payslips | enter hours, preview, finalise, share payslip PDF |
+| 5 | Payroll run UI + payslips | enter hours, preview, finalise, print or save payslip PDF |
 | 6 | HMRC liability + holiday ledger | report totals reconcile to payslips |
 | 7 | CSV export, encrypted backup/restore, polish | usable end-to-end demo with restorable data |
 
