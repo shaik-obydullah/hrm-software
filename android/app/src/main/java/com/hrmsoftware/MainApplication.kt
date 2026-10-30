@@ -16,8 +16,8 @@ class MainApplication : Application(), ReactApplication {
       object : DefaultReactNativeHost(this) {
         override fun getPackages(): List<ReactPackage> =
             PackageList(this).packages.apply {
-              // Packages that cannot be autolinked yet can be added manually here, for example:
-              // add(MyReactNativePackage())
+              // Printing is a small app-local module, so it is registered by hand.
+              add(PayslipPrintPackage())
             }
 
         override fun getJSMainModuleName(): String = "index"

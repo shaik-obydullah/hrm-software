@@ -1,6 +1,6 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Alert, StyleSheet, Text, View } from 'react-native';
 import {
   getEmployee,
   getPayrollRun,
@@ -15,6 +15,7 @@ import type {
 import type { RootStackParamList } from '../navigation/types';
 import { useApp } from '../state/AppContext';
 import {
+  AppButton,
   Card,
   KeyValue,
   LoadingState,
@@ -22,7 +23,9 @@ import {
   SectionTitle,
 } from '../ui/components';
 import { colors, spacing } from '../ui/theme';
-import { displayDate } from '../utils/dates';
+import { displayDate, todayIso } from '../utils/dates';
+import { buildPayslipHtml } from '../utils/payslipHtml';
+import { printHtml } from '../native/payslipPrint';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Payslip'>;
 
@@ -43,6 +46,7 @@ export function PayslipScreen({ route }: Props) {
   const [employee, setEmployee] = useState<Employee | null>(null);
   const [run, setRun] = useState<PayrollRunWithTotals | null>(null);
   const [loading, setLoading] = useState(true);
+  const [printing, setPrinting] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -87,6 +91,63 @@ export function PayslipScreen({ route }: Props) {
     payslip.employeePensionPence +
     payslip.studentLoanPence;
 
+  const printPayslip = async () => {
+    setPrinting(true);
+    try {
+      const payDate = run ? displayDate(run.payDate) : '—';
+      const html = buildPayslipHtml({
+        companyName: settings.company_name,
+        taxYear: run?.taxYear ?? '',
+        employeeName: `${employee.firstName} ${employee.lastName}`,
+        niNumber: employee.niNumber,
+        taxCode: payslip.taxCodeUsed,
+        niCategory: payslip.niCategoryUsed,
+        payDate,
+        period: run
+          ? `${displayDate(run.periodStart)} → ${displayDate(run.periodEnd)}`
+          : '—',
+        taxPeriod: breakdown.periodNumber
+          ? `${breakdown.periodNumber} of ${breakdown.totalPeriods}`
+          : undefined,
+        basicLabel: `Basic pay (${formatHours(
+          payslip.hoursWorked,
+        )} × ${formatMoney(payslip.hourlyRatePence)})`,
+        basicPence:
+          payslip.grossPayPence -
+          payslip.bonusPence -
+          payslip.holidayPayPence,
+        holidayHours: payslip.holidayHours,
+        holidayPence: payslip.holidayPayPence,
+        bonusPence: payslip.bonusPence,
+        grossPence: payslip.grossPayPence,
+        payePence: payslip.payePence,
+        employeeNiPence: payslip.employeeNiPence,
+        employeePensionPence: payslip.employeePensionPence,
+        studentLoanPence: payslip.studentLoanPence,
+        totalDeductionsPence: deductions,
+        netPence: payslip.netPayPence,
+        employerNiPence: payslip.employerNiPence,
+        employerPensionPence: payslip.employerPensionPence,
+        employerCostPence: payslip.employerCostPence,
+        holidayAccruedHours:
+          breakdown.holiday?.accruedHours ?? payslip.holidayAccruedHours,
+        warning: breakdown.tax?.parsed?.warning,
+        generatedOn: displayDate(todayIso()),
+      });
+      await printHtml(
+        html,
+        `Payslip ${employee.firstName} ${employee.lastName} ${payDate}`,
+      );
+    } catch (error) {
+      Alert.alert(
+        'Could not print payslip',
+        error instanceof Error ? error.message : String(error),
+      );
+    } finally {
+      setPrinting(false);
+    }
+  };
+
   return (
     <ScrollScreen>
       <Card>
@@ -125,6 +186,15 @@ export function PayslipScreen({ route }: Props) {
             value={`${breakdown.periodNumber} of ${breakdown.totalPeriods}`}
           />
         ) : null}
+      </Card>
+
+      <Card>
+        <AppButton
+          title="Print / save PDF"
+          variant="secondary"
+          onPress={printPayslip}
+          loading={printing}
+        />
       </Card>
 
       <SectionTitle>Earnings</SectionTitle>

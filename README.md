@@ -8,8 +8,9 @@ change.
 
 > **Status:** working Android MVP. Core employee records, payroll runs, payslips,
 > HMRC liability reports, effective-dated rates and holiday tracking are
-> implemented and tested on a physical tablet. Biometrics, PDF/CSV export and
-> encrypted backup are **not** implemented yet.
+> implemented and tested on a physical tablet. Payslips can be printed or saved
+> as PDF through Android's print dialog. Biometrics, CSV export and encrypted
+> backup are **not** implemented yet.
 >
 > **Important:** this is a payroll *calculator*, not HMRC-recognised payroll software.
 > It does not submit RTI (FPS/EPS) to HMRC. Figures must be checked before paying
@@ -64,7 +65,7 @@ Bare **React Native** with the Community CLI — **no Expo**.
 | Auth / lock | **PIN hashed with PBKDF2-SHA256 (`@noble/hashes`)** | Pure-JS, Metro-safe hashing; no Node `crypto` dependency |
 | Money maths | **integer pence + decimal.js** | Avoid floating-point errors in payroll |
 | Files | *planned:* `react-native-fs` + `react-native-share` | CSV export and encrypted backup/restore |
-| PDF | *planned:* `react-native-print` | Render payslip HTML to PDF |
+| PDF / print | **Android `PrintManager` + off-screen `WebView`** (small app-local native module) | Uses the system print dialog, which also saves A4 PDFs; no extra dependency |
 | Tests | **Jest + React Native Testing Library** | Payroll-engine unit tests and component tests |
 | Build | **Gradle (Android) / Xcode (iOS)** | Standard native builds, no Expo/EAS |
 
@@ -413,7 +414,7 @@ holiday ledger.
    - run detail: per-employee breakdown, totals, employer cost
    - void a mistaken run: removes the run, its payslips and the holiday hours it
      added, and records the void in the audit log
-   - payslip view + CSV/print
+   - payslip view + print / save as PDF
 5. **HMRC liability** — per run: PAYE, employee NI, employer NI, student loans,
    employment allowance, total due, payment reference and due date (22nd by
    electronic payment).
