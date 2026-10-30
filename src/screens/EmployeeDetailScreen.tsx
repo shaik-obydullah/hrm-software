@@ -361,6 +361,9 @@ export function EmployeeDetailScreen({ route }: Props) {
             entry.type === 'BOOKED' ||
             entry.type === 'TAKEN' ||
             entry.type === 'PAID';
+          const dateText = displayDate(entry.entryDate);
+          const note =
+            entry.note && entry.note !== dateText ? entry.note : '';
           return (
             <View key={entry.id} style={styles.entryRow}>
               <View style={styles.entryCopy}>
@@ -376,11 +379,9 @@ export function EmployeeDetailScreen({ route }: Props) {
                           : 'Adjustment'}
                 </Text>
                 <Text style={styles.entryMeta}>
-                  {entry.type === 'BOOKED'
-                    ? entry.note
-                    : `${displayDate(entry.entryDate)}${
-                        entry.note ? ` · ${entry.note}` : ''
-                      }`}
+                  {entry.type === 'BOOKED' && note
+                    ? note
+                    : `${dateText}${note ? ` · ${note}` : ''}`}
                 </Text>
                 {entry.type === 'BOOKED' ? (
                   <Pressable onPress={() => cancelBooking(entry)}>
