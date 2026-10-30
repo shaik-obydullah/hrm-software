@@ -4,6 +4,7 @@ import { Alert, StyleSheet, Text, View } from 'react-native';
 import {
   createPayrollRun,
   getActiveRateSet,
+  getBookedHolidayHours,
   getEmploymentAllowanceUsed,
   getPayrollRun,
   getPayslips,
@@ -73,6 +74,7 @@ export function PayrollRunScreen({ navigation, route }: Props) {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [rateSet, setRateSet] = useState<RateSet | null>(null);
   const [ytd, setYtd] = useState<YtdMap>({});
+  const [booked, setBooked] = useState<Record<string, number>>({});
   const [allowanceUsed, setAllowanceUsed] = useState(0);
   const [hours, setHours] = useState<Record<string, string>>({});
   const [bonus, setBonus] = useState<Record<string, string>>({});
@@ -114,11 +116,21 @@ export function PayrollRunScreen({ navigation, route }: Props) {
       );
       const entries = await Promise.all(
         relevant.map(async (employee) => {
-          const figures = await getYtd(employee.id, taxYear, nextPayDate);
-          return [employee.id, figures] as const;
+          const [figures, bookedHours] = await Promise.all([
+            getYtd(employee.id, taxYear, nextPayDate),
+            getBookedHolidayHours(employee.id),
+          ]);
+          return [employee.id, { figures, bookedHours }] as const;
         }),
       );
-      setYtd(Object.fromEntries(entries));
+      setYtd(
+        Object.fromEntries(entries.map(([id, value]) => [id, value.figures])),
+      );
+      setBooked(
+        Object.fromEntries(
+          entries.map(([id, value]) => [id, value.bookedHours]),
+        ),
+      );
     },
     [employees],
   );
@@ -586,6 +598,12 @@ export function PayrollRunScreen({ navigation, route }: Props) {
                     {formatMoney(employee.hourlyRatePence)}/hr ·{' '}
                     {employee.taxCode || '1257L'} · NI {employee.niCategory}
                   </Text>
+                  {(booked[employee.id] ?? 0) > 0 ? (
+                    <Text style={styles.bookedHint}>
+                      {formatHours(booked[employee.id])} holiday booked — enter
+                      these hours below to pay them
+                    </Text>
+                  ) : null}
                 </View>
                 {line ? (
                   <Text style={styles.lineNet}>
@@ -720,6 +738,12 @@ const styles = StyleSheet.create({
     color: colors.danger,
     lineHeight: 17,
     marginTop: spacing.sm,
+  },
+  bookedHint: {
+    fontSize: 12,
+    color: colors.tealDark,
+    lineHeight: 17,
+    marginTop: 2,
   },
   divider: {
     height: 1,

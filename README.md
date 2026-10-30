@@ -34,7 +34,8 @@ change.
   student loan, less Employment Allowance where applicable.
 - **Rates admin panel**: effective-dated tax bands, NI thresholds/rates, pension
   thresholds, student loan thresholds, statutory holiday rate.
-- **Holiday balance** tracking for hourly staff (accrued vs taken vs remaining).
+- **Holiday balance** tracking for hourly staff (accrued vs booked vs taken vs
+  remaining), with leave booked by date range.
 - **Audit trail** of rate changes and finalised payroll runs.
 
 ### Out of scope (for now)
@@ -317,9 +318,13 @@ Postgraduate loans stack on top of an undergraduate plan.
 Hourly staff accrue **12.07%** of hours worked (5.6 weeks ÷ 46.4 working weeks).
 
 - Each payroll run adds an `ACCRUAL` entry to `holiday_ledger`.
-- When holiday is taken and paid, add a `TAKEN`/`PAID` entry and include
-  `holiday_pay_pence` in gross pay.
-- Balance = accrued − taken. Displayed on the employee page and payroll run.
+- Leave is booked by date range (`BOOKED`), deducting the balance immediately.
+  Weekends are not counted; hours = working days × hours per day.
+- When payroll pays holiday hours, booked entries are converted to `PAID` first,
+  so the same leave is never deducted twice. Any unbooked hours become `TAKEN`.
+- Balance = accrued − booked − paid/taken. Displayed on the employee page and
+  payroll run.
+- Unpaid bookings can be cancelled, returning the hours to the balance.
 - Rolled-up holiday pay is configurable but off by default (rules differ for
   irregular-hours workers).
 
@@ -412,7 +417,8 @@ holiday ledger.
 5. **HMRC liability** — per run: PAYE, employee NI, employer NI, student loans,
    employment allowance, total due, payment reference and due date (22nd by
    electronic payment).
-6. **Holiday** — balances per employee, ledger, manual adjustment.
+6. **Holiday** — book leave by date range, per-employee balances and ledger,
+   cancel unpaid bookings, manual adjustment.
 7. **Rates admin** — active set, draft editor, validation, preview, activation
    history.
 8. **Settings** — company name, PAYE reference, accounts office reference, pay

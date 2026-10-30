@@ -1,4 +1,5 @@
 import type { Scalar } from '@op-engineering/op-sqlite';
+import type { Transaction } from '@op-engineering/op-sqlite';
 import type {
   AdminProfile,
   Employee,
@@ -421,6 +422,65 @@ export interface NewPayrollRun {
   holiday: NewHolidayEntry[];
 }
 
+/**
+ * Marks booked leave as paid up to the hours paid in this run. Booked hours are
+ * already deducted from the balance, so converting them avoids deducting twice.
+ * Returns the hours paid that were never booked, which the caller records as
+ * holiday taken.
+ */
+async function consumeBookedHoliday(
+  tx: Transaction,
+  employeeId: string,
+  hours: number,
+  payslipId: string | null,
+  runId: string,
+  now: string,
+): Promise<number> {
+  const booked = await tx.execute(
+    `SELECT id, entry_date, hours, note FROM holiday_ledger
+     WHERE employee_id = ? AND type = 'BOOKED'
+     ORDER BY entry_date ASC, created_at ASC`,
+    [employeeId],
+  );
+  let remaining = hours;
+  for (const row of booked.rows) {
+    if (remaining <= 0.0001) {
+      break;
+    }
+    const bookedHours = Number(row.hours);
+    if (bookedHours <= remaining + 0.0001) {
+      await tx.execute(
+        `UPDATE holiday_ledger SET type = 'PAID', payslip_id = ? WHERE id = ?`,
+        [payslipId, String(row.id)],
+      );
+      remaining -= bookedHours;
+    } else {
+      await tx.execute('UPDATE holiday_ledger SET hours = ? WHERE id = ?', [
+        bookedHours - remaining,
+        String(row.id),
+      ]);
+      await tx.execute(
+        `INSERT INTO holiday_ledger
+          (id, employee_id, entry_date, type, hours, note, payslip_id,
+           payroll_run_id, created_at)
+         VALUES (?, ?, ?, 'PAID', ?, ?, ?, ?, ?)`,
+        [
+          makeId('hol'),
+          employeeId,
+          String(row.entry_date),
+          remaining,
+          String(row.note ?? ''),
+          payslipId,
+          runId,
+          now,
+        ],
+      );
+      remaining = 0;
+    }
+  }
+  return Math.max(0, remaining);
+}
+
 export async function createPayrollRun(input: NewPayrollRun): Promise<string> {
   const db = getDb();
   const runId = makeId('run');
@@ -490,6 +550,22 @@ export async function createPayrollRun(input: NewPayrollRun): Promise<string> {
     }
 
     for (const entry of input.holiday) {
+      let hours = entry.hours;
+      if (entry.type === 'TAKEN' && hours > 0) {
+        const unbooked = await consumeBookedHoliday(
+          tx,
+          entry.employeeId,
+          hours,
+          payslipIds.get(entry.employeeId) ?? null,
+          runId,
+          now,
+        );
+        if (unbooked <= 0.0001) {
+          // Every paid hour came from a booking, now marked PAID.
+          continue;
+        }
+        hours = unbooked;
+      }
       await tx.execute(
         `INSERT INTO holiday_ledger
           (id, employee_id, entry_date, type, hours, note, payslip_id,
@@ -500,7 +576,7 @@ export async function createPayrollRun(input: NewPayrollRun): Promise<string> {
           entry.employeeId,
           entry.entryDate,
           entry.type,
-          entry.hours,
+          hours,
           entry.note ?? '',
           entry.type === 'TAKEN' || entry.type === 'PAID'
             ? payslipIds.get(entry.employeeId) ?? null
@@ -731,12 +807,75 @@ export async function getHolidayBalance(employeeId: string): Promise<number> {
   const db = getDb();
   const result = await db.execute(
     `SELECT COALESCE(SUM(
-      CASE WHEN type IN ('TAKEN', 'PAID') THEN -hours ELSE hours END
+      CASE WHEN type IN ('BOOKED', 'TAKEN', 'PAID') THEN -hours ELSE hours END
     ), 0) AS balance
     FROM holiday_ledger WHERE employee_id = ?`,
     [employeeId],
   );
   return number(result.rows[0]?.balance);
+}
+
+/** Holiday booked for future dates that has not yet been paid in a run. */
+export async function getBookedHolidayHours(
+  employeeId: string,
+): Promise<number> {
+  const db = getDb();
+  const result = await db.execute(
+    `SELECT COALESCE(SUM(hours), 0) AS booked
+     FROM holiday_ledger WHERE employee_id = ? AND type = 'BOOKED'`,
+    [employeeId],
+  );
+  return number(result.rows[0]?.booked);
+}
+
+/**
+ * Records leave for a date range. The hours were already worked out by
+ * validateHolidayBooking, so this only stores the booking.
+ */
+export async function bookHoliday(input: {
+  employeeId: string;
+  startDate: string;
+  endDate: string;
+  hours: number;
+  note: string;
+}): Promise<void> {
+  const db = getDb();
+  await db.execute(
+    `INSERT INTO holiday_ledger
+      (id, employee_id, entry_date, type, hours, note, payslip_id,
+       payroll_run_id, created_at)
+     VALUES (?, ?, ?, 'BOOKED', ?, ?, NULL, NULL, ?)`,
+    [
+      makeId('hol'),
+      input.employeeId,
+      input.startDate,
+      input.hours,
+      input.note,
+      new Date().toISOString(),
+    ],
+  );
+  await logAudit('book', 'holiday_ledger', input.employeeId, {
+    startDate: input.startDate,
+    endDate: input.endDate,
+    hours: input.hours,
+    note: input.note,
+  });
+}
+
+/**
+ * Cancels an unpaid booking. Paid holiday cannot be removed here because the
+ * payslip already accounts for it — void the payroll run instead.
+ */
+export async function cancelHolidayBooking(entryId: string): Promise<void> {
+  const db = getDb();
+  const result = await db.execute(
+    `DELETE FROM holiday_ledger WHERE id = ? AND type = 'BOOKED'`,
+    [entryId],
+  );
+  if (result.rowsAffected === 0) {
+    throw new Error('Only unpaid holiday bookings can be cancelled.');
+  }
+  await logAudit('cancel_booking', 'holiday_ledger', entryId);
 }
 
 export async function getHolidayEntries(

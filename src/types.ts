@@ -187,7 +187,7 @@ export interface HolidayEntry {
   id: string;
   employeeId: string;
   entryDate: string;
-  type: 'ACCRUAL' | 'TAKEN' | 'PAID' | 'ADJUSTMENT';
+  type: 'ACCRUAL' | 'BOOKED' | 'TAKEN' | 'PAID' | 'ADJUSTMENT';
   hours: number;
   note: string;
   payslipId: string | null;

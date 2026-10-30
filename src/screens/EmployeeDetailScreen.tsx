@@ -1,10 +1,12 @@
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NavigationProp } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import React, { useCallback, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useMemo, useState } from 'react';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import {
   addHolidayAdjustment,
+  bookHoliday,
+  cancelHolidayBooking,
   getEmployee,
   getEmployeePayslips,
   getHolidayBalance,
@@ -28,7 +30,8 @@ import {
   TextField,
 } from '../ui/components';
 import { colors, spacing } from '../ui/theme';
-import { displayDate } from '../utils/dates';
+import { displayDate, todayIso } from '../utils/dates';
+import { validateHolidayBooking } from '../utils/holiday';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'EmployeeDetail'>;
 type Nav = NavigationProp<RootStackParamList & TabParamList>;
@@ -44,6 +47,14 @@ export function EmployeeDetailScreen({ route }: Props) {
   const [adjustHours, setAdjustHours] = useState('');
   const [adjustNote, setAdjustNote] = useState('');
   const [savingAdjustment, setSavingAdjustment] = useState(false);
+  const [bookingStart, setBookingStart] = useState(todayIso());
+  const [bookingEnd, setBookingEnd] = useState('');
+  const [hoursPerDay, setHoursPerDay] = useState('7.5');
+  const [bookingNote, setBookingNote] = useState('');
+  const [bookingErrors, setBookingErrors] = useState<Record<string, string>>(
+    {},
+  );
+  const [savingBooking, setSavingBooking] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -84,6 +95,82 @@ export function EmployeeDetailScreen({ route }: Props) {
     } finally {
       setSavingAdjustment(false);
     }
+  };
+
+  const booking = useMemo(
+    () =>
+      validateHolidayBooking({
+        startDate: bookingStart,
+        endDate: bookingEnd,
+        hoursPerDay,
+      }),
+    [bookingStart, bookingEnd, hoursPerDay],
+  );
+
+  const saveBooking = async () => {
+    const result = validateHolidayBooking({
+      startDate: bookingStart,
+      endDate: bookingEnd,
+      hoursPerDay,
+    });
+    setBookingErrors(result.errors);
+    if (Object.keys(result.errors).length > 0) {
+      return;
+    }
+    const start = bookingStart.trim();
+    const end = bookingEnd.trim() || start;
+    const range =
+      start === end
+        ? displayDate(start)
+        : `${displayDate(start)} → ${displayDate(end)}`;
+    setSavingBooking(true);
+    try {
+      await bookHoliday({
+        employeeId,
+        startDate: start,
+        endDate: end,
+        hours: result.hours,
+        note: bookingNote.trim() ? `${range} · ${bookingNote.trim()}` : range,
+      });
+      setBookingEnd('');
+      setBookingNote('');
+      setBookingErrors({});
+      await load();
+    } catch (err) {
+      Alert.alert(
+        'Could not book holiday',
+        err instanceof Error ? err.message : String(err),
+      );
+    } finally {
+      setSavingBooking(false);
+    }
+  };
+
+  const cancelBooking = (entry: HolidayEntry) => {
+    Alert.alert(
+      'Cancel booking?',
+      `Remove the ${formatHours(entry.hours)} booking starting ${displayDate(
+        entry.entryDate,
+      )}? The hours go back into the balance.`,
+      [
+        { text: 'Keep', style: 'cancel' },
+        {
+          text: 'Cancel booking',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await cancelHolidayBooking(entry.id);
+              await load();
+            } catch (err) {
+              Alert.alert(
+                'Could not cancel booking',
+                err instanceof Error ? err.message : String(err),
+              );
+            }
+          },
+        },
+      ],
+    );
   };
 
   if (loading) {
@@ -177,7 +264,14 @@ export function EmployeeDetailScreen({ route }: Props) {
         <View style={styles.holidayHeader}>
           <View>
             <Text style={styles.holidayLabel}>Remaining balance</Text>
-            <Text style={styles.holidayValue}>{formatHours(balance)}</Text>
+            <Text
+              style={[
+                styles.holidayValue,
+                balance < 0 && styles.entryHoursNegative,
+              ]}
+            >
+              {formatHours(balance)}
+            </Text>
           </View>
           <Badge
             label={`${employee.holidayEntitlementDays} days/year`}
@@ -185,22 +279,73 @@ export function EmployeeDetailScreen({ route }: Props) {
           />
         </View>
         <Text style={styles.hint}>
-          Accrual is 12.07% of hours worked. Taken holiday reduces the balance.
+          Accrual is 12.07% of hours worked. Booked and paid holiday reduces the
+          balance.
         </Text>
 
         <View style={styles.adjustBox}>
+          <Text style={styles.fieldLabel}>Book leave</Text>
+          <TextField
+            label="Start date"
+            value={bookingStart}
+            onChangeText={setBookingStart}
+            placeholder="YYYY-MM-DD"
+            keyboardType="numbers-and-punctuation"
+            error={bookingErrors.startDate}
+          />
+          <TextField
+            label="End date (optional)"
+            value={bookingEnd}
+            onChangeText={setBookingEnd}
+            placeholder="Same day"
+            keyboardType="numbers-and-punctuation"
+            hint="Weekends are not counted. Leave blank for a single day."
+            error={bookingErrors.endDate}
+          />
+          <TextField
+            label="Hours per day"
+            value={hoursPerDay}
+            onChangeText={setHoursPerDay}
+            placeholder="7.5"
+            keyboardType="decimal-pad"
+            error={bookingErrors.hoursPerDay}
+          />
+          <TextField
+            label="Note (optional)"
+            value={bookingNote}
+            onChangeText={setBookingNote}
+            placeholder="e.g. family holiday"
+          />
+          {Object.keys(booking.errors).length === 0 ? (
+            <Text style={styles.bookingSummary}>
+              {booking.workingDays}{' '}
+              {booking.workingDays === 1 ? 'working day' : 'working days'} ·{' '}
+              {formatHours(booking.hours)} will be deducted
+            </Text>
+          ) : null}
+          <AppButton
+            title="Book holiday"
+            onPress={saveBooking}
+            loading={savingBooking}
+            disabled={!bookingStart}
+          />
+        </View>
+
+        <View style={styles.adjustBox}>
+          <Text style={styles.fieldLabel}>Manual adjustment</Text>
           <TextField
             label="Adjustment (hours)"
             value={adjustHours}
             onChangeText={setAdjustHours}
             keyboardType="numbers-and-punctuation"
             placeholder="e.g. 7.5 or -3"
+            hint="For carry-over or corrections, not for leave."
           />
           <TextField
             label="Note"
             value={adjustNote}
             onChangeText={setAdjustNote}
-            placeholder="e.g. booked leave"
+            placeholder="e.g. carry-over from last year"
           />
           <AppButton
             title="Add adjustment"
@@ -211,33 +356,50 @@ export function EmployeeDetailScreen({ route }: Props) {
           />
         </View>
 
-        {entries.slice(0, 8).map((entry) => (
-          <View key={entry.id} style={styles.entryRow}>
-            <View style={styles.entryCopy}>
-              <Text style={styles.entryTitle}>
-                {entry.type === 'TAKEN' || entry.type === 'PAID'
-                  ? 'Holiday taken'
-                  : entry.type === 'ACCRUAL'
-                    ? 'Accrued'
-                    : 'Adjustment'}
-              </Text>
-              <Text style={styles.entryMeta}>
-                {displayDate(entry.entryDate)}
-                {entry.note ? ` · ${entry.note}` : ''}
+        {entries.slice(0, 12).map((entry) => {
+          const deducted =
+            entry.type === 'BOOKED' ||
+            entry.type === 'TAKEN' ||
+            entry.type === 'PAID';
+          return (
+            <View key={entry.id} style={styles.entryRow}>
+              <View style={styles.entryCopy}>
+                <Text style={styles.entryTitle}>
+                  {entry.type === 'BOOKED'
+                    ? 'Holiday booked'
+                    : entry.type === 'TAKEN'
+                      ? 'Holiday taken'
+                      : entry.type === 'PAID'
+                        ? 'Holiday paid'
+                        : entry.type === 'ACCRUAL'
+                          ? 'Accrued'
+                          : 'Adjustment'}
+                </Text>
+                <Text style={styles.entryMeta}>
+                  {entry.type === 'BOOKED'
+                    ? entry.note
+                    : `${displayDate(entry.entryDate)}${
+                        entry.note ? ` · ${entry.note}` : ''
+                      }`}
+                </Text>
+                {entry.type === 'BOOKED' ? (
+                  <Pressable onPress={() => cancelBooking(entry)}>
+                    <Text style={styles.cancelLink}>Cancel booking</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+              <Text
+                style={[
+                  styles.entryHours,
+                  deducted && styles.entryHoursNegative,
+                ]}
+              >
+                {deducted ? '−' : '+'}
+                {formatHours(Math.abs(entry.hours))}
               </Text>
             </View>
-            <Text
-              style={[
-                styles.entryHours,
-                (entry.type === 'TAKEN' || entry.type === 'PAID') &&
-                  styles.entryHoursNegative,
-              ]}
-            >
-              {entry.type === 'TAKEN' || entry.type === 'PAID' ? '−' : '+'}
-              {formatHours(Math.abs(entry.hours))}
-            </Text>
-          </View>
-        ))}
+          );
+        })}
         {entries.length === 0 ? (
           <Text style={styles.hint}>No holiday movements yet.</Text>
         ) : null}
@@ -368,6 +530,24 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.border,
     paddingTop: spacing.md,
+  },
+  fieldLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.text,
+    marginBottom: spacing.xs,
+  },
+  bookingSummary: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.tealDark,
+    marginTop: spacing.sm,
+  },
+  cancelLink: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.danger,
+    marginTop: 4,
   },
   entryRow: {
     flexDirection: 'row',
