@@ -409,7 +409,8 @@ Navigation: **bottom tabs** (Dashboard, Employees, Payroll, Reports, Settings) w
 stack screens for employee detail, the payroll wizard, payslips, rates admin and the
 holiday ledger.
 
-1. **App unlock** — device PIN, with Face ID / fingerprint when enabled.
+1. **App launch** — opens directly to the Dashboard; the device PIN is used
+   after locking the app or the 5-minute background auto-lock.
 2. **Dashboard** — headcount, next pay date, current rate set, holiday balances
    needing attention, last run's HMRC liability.
 3. **Employees**

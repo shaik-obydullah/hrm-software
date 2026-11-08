@@ -56,7 +56,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (profile) {
           pinHash.current = profile.pinHash;
           setAdminName(profile.name);
-          setStatus('locked');
+          // Open straight to the app on launch. The PIN is still used when the
+          // admin locks the app or after the background auto-lock timeout.
+          setStatus('unlocked');
         } else {
           setStatus('setup');
         }
